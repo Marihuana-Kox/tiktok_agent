@@ -14,6 +14,7 @@ def process_single_topic(manager: TopicManager, topic_data: dict, prompt_style: 
     
     topic_id = topic_data["id"]
     topic = topic_data["topic"]
+    angle = topic_data.get("angle", "")      # ← ЧИТАЕМ ВЕКТОР
     notes = topic_data.get("notes", "")  # Заметки по теме
     
     # Загружаем стиль автора
@@ -43,7 +44,7 @@ def process_single_topic(manager: TopicManager, topic_data: dict, prompt_style: 
         
         # ЭТАП 3: Написание статьи
         print("\n✍️ ЭТАП 3: Написание статьи...")
-        article = write_article(topic, facts, plan, notes, prompt_style)
+        article = write_article(topic, facts, plan, notes, prompt_style, angle)
         print("✅ Статья написана")
         
         # Сохранение

@@ -20,6 +20,52 @@ def load_author_style() -> dict:
 def format_author_prompt(style: dict) -> str:
     """Форматирует стиль в промпт для модели"""
     
+    # === БЛОК ХУКА (если есть) ===
+    hook_block = ""
+    if "hook_examples" in style:
+        hook = style["hook_examples"]
+        hook_block = f"""
+=== ПРАВИЛА ХУКА (ПЕРВЫЕ 3 СЕКУНДЫ) ===
+
+Первое предложение: {hook.get('first_sentence', 'Шок-факт с цифрой')}
+Второе предложение: {hook.get('second_sentence', 'Парадокс или сравнение')}
+Третье предложение: {hook.get('third_sentence', 'Вопрос который переворачивает')}
+
+❌ ЗАПРЕЩЁННЫЕ ОТКРЫТИЯ:
+- "Знали ли вы что..."
+- "Представьте себе..."
+- "В этой статье мы рассмотрим..."
+- "Давайте поговорим о..."
+
+✅ ПРИМЕР СИЛЬНОГО ХУКА:
+{style.get('examples', {}).get('good', '')}
+
+ВАЖНО: Если первое предложение не шокирует — перепиши его.
+
+"""
+    
+    # === БЛОК СТРУКТУРЫ (если есть) ===
+    structure_block = ""
+    if "structure" in style:
+        struct = style["structure"]
+        structure_block = f"""
+=== СТРУКТУРА СТАТЬИ ===
+
+ХУК:
+{struct.get('hook', '')}
+
+ОСНОВНАЯ ЧАСТЬ:
+{struct.get('body', '')}
+
+АЛЬТЕРНАТИВНАЯ ВЕРСИЯ:
+{struct.get('alternative', '')}
+
+ФИНАЛ:
+{struct.get('final', '')}
+
+"""
+    
+    # === СОБИРАЕМ ВСЁ ВМЕСТЕ ===
     prompt = f"""
 === СТИЛЬ АВТОРА ===
 Имя: {style['name']}
@@ -31,25 +77,15 @@ def format_author_prompt(style: dict) -> str:
 ТОН ПОВЕСТВОВАНИЯ:
 {style['tone']}
 
+{hook_block}
+
+{structure_block}
+
 ❌ ЗАПРЕЩЁННЫЕ ФРАЗЫ (никогда не использовать):
 {chr(10).join('- ' + p for p in style['forbidden_phrases'])}
 
 ✅ ОБЯЗАТЕЛЬНЫЕ ЭЛЕМЕНТЫ (должны быть в каждом тексте):
 {chr(10).join('- ' + e for e in style['required_elements'])}
-
-=== СТРУКТУРА СТАТЬИ ===
-
-ХУК:
-{style['structure']['hook']}
-
-ОСНОВНАЯ ЧАСТЬ:
-{style['structure']['body']}
-
-АЛЬТЕРНАТИВНАЯ ВЕРСИЯ:
-{style['structure']['alternative']}
-
-ФИНАЛ:
-{style['structure']['final']}
 
 === ПРИМЕРЫ ===
 
@@ -57,6 +93,29 @@ def format_author_prompt(style: dict) -> str:
 ✅ ХОРОШО: {style['examples']['good']}
 
 Используй этот стиль во ВСЕХ текстах. Это не рекомендация — это требование.
+"""
+    
+    return prompt
+
+
+def format_angle_prompt(angle: str) -> str:
+    """Форматирует вектор темы в промпт"""
+    
+    if not angle:
+        return ""
+    
+    prompt = f"""
+=== ВЕКТОР СТАТЬИ (ПРИОРИТЕТ) ===
+Подача материала: {angle}
+
+ВАЖНО:
+- Все факты подбирай под этот вектор
+- Не бойся острых формулировок в рамках этого угла
+- Если вектор негативный — акцентируй противоречия
+- Если вектор позитивный — акцентируй достижения
+- Это не цензура — это редакторская позиция
+
+Используй этот вектор как главный ориентир при написании.
 """
     
     return prompt

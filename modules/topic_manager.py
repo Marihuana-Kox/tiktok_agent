@@ -24,13 +24,14 @@ class TopicManager:
         with open(self.filepath, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
     
-    def add_topic(self, topic: str, notes: str = "") -> int:
+    def add_topic(self, topic: str, angle: str = "", notes: str = "") -> int:
         """Добавляет новую тему в очередь"""
         topic_id = self.data["next_id"]
         
         self.data["topics"].append({
             "id": topic_id,
             "topic": topic,
+            "angle": angle,
             "notes": notes,
             "status": "pending",
             "output_file": None
