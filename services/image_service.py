@@ -108,30 +108,22 @@ def generate_image_with_library(
     description: str, 
     project_path: str,
     size: str = "1024x1792",
-    quality: str = "standard"
+    quality: str = "standard",
+    filename: str = None  # ← НОВЫЙ ПАРАМЕТР
 ) -> str:
     """
     Генерирует картинку с проверкой библиотеки.
-    Если картинка уже есть — копирует из библиотеки.
-    
-    Args:
-        prompt: Промт для генерации
-        description: Описание для имени файла
-        project_path: Папка проекта куда сохранить
-        size: Размер картинки
-        quality: Качество
-    
-    Returns:
-        Путь к файлу в папке проекта
     """
     
-    # Формируем имя файла
-    safe_description = description[:50].replace(' ', '_').replace('/', '_').replace(':', '')
-    filename = f"{safe_description}.jpg"
+    # Если имя файла не передано — генерируем из описания
+    if filename is None:
+        safe_description = description[:50].replace(' ', '_').replace('/', '_').replace(':', '')
+        filename = f"{safe_description}.jpg"
+    
     dest_path = os.path.join(project_path, filename)
     
-    # Проверяем библиотеку
-    existing_path = find_existing_image(safe_description)
+    # Проверяем библиотеку (ищем по описанию без номера)
+    existing_path = find_existing_image(description)
     
     if existing_path:
         print(f"📚 Найдена в библиотеке: {os.path.basename(existing_path)}")
@@ -141,18 +133,18 @@ def generate_image_with_library(
     # Генерируем новую
     print(f"✨ Генерация новой картинки...")
     
-    # Добавляем технические требования к промту
     full_prompt = f"{prompt}, vertical 9:16 aspect ratio, cinematic lighting, high detail, photorealistic"
     
-    # Путь в библиотеку
+    # Путь в библиотеку (сохраняем БЕЗ номера для переиспользования)
     library_path = get_image_library_path()
     os.makedirs(library_path, exist_ok=True)
-    library_file = os.path.join(library_path, filename)
+    library_filename = f"{description.replace(' ', '_')}.jpg"  # ← Без номера
+    library_file = os.path.join(library_path, library_filename)
     
     # Генерируем и сохраняем в библиотеку
     generate_image(full_prompt, library_file, size, quality)
     
-    # Копируем в проект
+    # Копируем в проект (с номером)
     copy_image_to_project(library_file, dest_path)
     
     return dest_path
@@ -164,7 +156,7 @@ def generate_all_images(
     topic: str
 ) -> list:
     """
-    Генерирует все картинки для проекта.
+    Генерирует все картинки для проекта с нумерацией.
     
     Args:
         prompts: Список промтов [{"description": "...", "prompt": "..."}, ...]
@@ -172,7 +164,7 @@ def generate_all_images(
         topic: Тема для логирования
     
     Returns:
-        Список путей к картинкам
+        Список путей к картинкам (в правильном порядке)    
     """
     
     print(f"\n{'='*60}")
@@ -181,21 +173,27 @@ def generate_all_images(
     
     generated_paths = []
     
-    for i, item in enumerate(prompts, 1):
+    for i, item in enumerate(prompts, 1):  # ← Нумерация с 1
         description = item.get("description", f"image_{i}")
         prompt = item.get("prompt", "")
         
-        print(f"\n[{i}/{len(prompts)}] {description}")
+        # Формируем имя файла с номером: image_1_Описание.jpg
+        safe_description = description[:50].replace(' ', '_').replace('/', '_').replace(':', '')
+        filename = f"image_{i}_{safe_description}.jpg"  # ← ДОБАВЛЕН НОМЕР
+        dest_path = os.path.join(project_path, filename)
+        
+        print(f"\n[{i}/{len(prompts)}] {filename}")
         
         try:
             path = generate_image_with_library(
                 prompt=prompt,
                 description=description,
-                project_path=project_path
+                project_path=project_path,
+                filename=filename  # ← Передаём имя файла
             )
             generated_paths.append(path)
             
-            # Пауза между генерациями (DALL-E 3 лимит)
+            # Пауза между генерациями
             if i < len(prompts):
                 print("⏸️ Пауза 3 секунды...")
                 import time

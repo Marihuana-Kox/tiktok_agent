@@ -1,0 +1,54 @@
+{
+    "video_settings": {
+      "fps": 30,
+      "resolution": "1080x1920",
+      "codec": "libx264",
+      "audio_codec": "aac",
+      "transition_duration": 0.5
+    },
+    
+    "effects": {
+        "ken_burns": {
+            "enabled": true,
+            "zoom_speed": 0.05,
+            "directions": ["zoom_in", "zoom_out", "none"]
+        },
+        
+    "rotation": {
+        "enabled": false,
+        "max_angle": 1,
+        "probability": 0.2
+        }
+    },
+    
+    "timing": {
+      "first_image_multiplier": 1.2,
+      "last_image_multiplier": 1.2,
+      "middle_images_multiplier": 0.9,
+      "min_image_duration": 3.0,
+      "max_image_duration": 15.0
+    },
+    
+    "style_presets": {
+      "dynamic": {
+        "ken_burns": true,
+        "rotation": true,
+        "transition": 0.3,
+        "description": "Быстрые переходы, много движения"
+      },
+      "cinematic": {
+        "ken_burns": true,
+        "rotation": false,
+        "transition": 0.8,
+        "description": "Плавные переходы, медленный зум"
+      },
+      "minimal": {
+        "ken_burns": false,
+        "rotation": false,
+        "transition": 0.5,
+        "description": "Без эффектов, только fade"
+      }
+    },
+    
+    "active_preset": "dynamic"
+  }

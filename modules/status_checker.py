@@ -1,39 +1,35 @@
 import os
 
 def check_topic_status(topic_path: str) -> dict:
-    """
-    Проверяет какие компоненты уже есть в папке темы.
-    
-    Returns:
-        Словарь со статусом каждого компонента
-    """
+    """Проверяет какие компоненты уже есть в папке темы"""
     
     status = {
         "script": False,
         "voice": False,
         "prompts": False,
         "images": [],
-        "images_count": 0
+        "images_count": 0,
+        "video": False  # ← ДОБАВЛЕНО
     }
     
     if not os.path.exists(topic_path):
         return status
     
-    # Проверяем сценарий
     if os.path.exists(os.path.join(topic_path, "script.txt")):
         status["script"] = True
     
-    # Проверяем аудио
     if os.path.exists(os.path.join(topic_path, "voice.mp3")):
         status["voice"] = True
     
-    # Проверяем промты
     if os.path.exists(os.path.join(topic_path, "prompts.json")):
         status["prompts"] = True
     
-    # Проверяем картинки (ищем файлы .jpg кроме voice.mp3)
+    # Проверка видео ← ДОБАВЛЕНО
+    if os.path.exists(os.path.join(topic_path, "video.mp4")):
+        status["video"] = True
+    
     for filename in os.listdir(topic_path):
-        if filename.endswith(".jpg") or filename.endswith(".png"):
+        if filename.endswith(('.jpg', '.jpeg', '.png')):
             status["images"].append(filename)
     
     status["images_count"] = len(status["images"])
@@ -48,25 +44,21 @@ def print_status(status: dict, topic_id: int):
     print(f"📊 СТАТУС ТЕМЫ #{topic_id}")
     print(f"{'='*60}")
     
-    # Сценарий
     if status["script"]:
         print("✅ Сценарий: готов")
     else:
         print("❌ Сценарий: нужен")
     
-    # Озвучка
     if status["voice"]:
         print("✅ Озвучка: готова")
     else:
         print("❌ Озвучка: нужна")
     
-    # Промты
     if status["prompts"]:
         print("✅ Промты: готовы")
     else:
         print("❌ Промты: нужны")
     
-    # Картинки
     if status["images_count"] >= 6:
         print(f"✅ Картинки: готовы ({status['images_count']} шт)")
     elif status["images_count"] > 0:
@@ -74,16 +66,22 @@ def print_status(status: dict, topic_id: int):
     else:
         print("❌ Картинки: нужны")
     
-    # Итог
+    # Проверка видео ← ДОБАВЛЕНО
+    if status["video"]:
+        print("✅ Видео: готово")
+    else:
+        print("❌ Видео: нужно")
+    
     all_ready = (
         status["script"] and 
         status["voice"] and 
         status["prompts"] and 
-        status["images_count"] >= 6
+        status["images_count"] >= 6 and
+        status["video"]  # ← ДОБАВЛЕНО
     )
     
     if all_ready:
-        print("\n🎉 ВСЁ ГОТОВО! Можно монтировать видео")
+        print("\n🎉 ВСЁ ГОТОВО! Можно загружать в TikTok")
     else:
         print("\n⚙️  ТРЕБУЕТСЯ ГЕНЕРАЦИЯ недостающих компонентов")
     
@@ -108,5 +106,8 @@ def get_missing_components(status: dict) -> list:
     
     if status["images_count"] < 6:
         missing.append("images")
+    
+    if not status["video"]:  # ← ДОБАВЛЕНО
+        missing.append("video")
     
     return missing

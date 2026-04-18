@@ -9,6 +9,7 @@ from modules.image_prompt_generator import generate_image_prompts, save_prompts_
 from modules.status_checker import check_topic_status, print_status, get_missing_components
 from services.voice_service import generate_voice_from_script
 from services.image_service import generate_all_images
+from services.video_service import generate_video_for_topic  # ← ДОЛЖЕН БЫТЬ
 from datetime import datetime
 import os
 import config
@@ -156,6 +157,24 @@ def process_single_topic(manager: TopicManager, topic_data: dict, prompt_style: 
         word_count = len(article.split())
         duration = word_count / 2.5
         print(f"⏱️ Длительность аудио: ~{duration:.0f} секунд")
+
+            # === ЭТАП 7: МОНТАЖ ВИДЕО ===
+        video_path = os.path.join(topic_path, "video.mp4")
+        
+        if not os.path.exists(video_path):
+            print("\n🎬 ЭТАП 7: Монтаж видео...")
+            
+            try:
+                video_path = generate_video_for_topic(topic_path)
+                print(f"✅ Видео готово: {video_path}")
+            except Exception as e:
+                print(f"⚠️  Ошибка монтажа видео: {e}")
+                print("   Видео можно смонтировать вручную позже")
+        else:
+            print("\n✅ Видео: уже готово (пропущено)")
+            
+        # Отмечаем тему как выполненную
+        manager.mark_completed(topic_id, script_filepath)
         
         return True
     
