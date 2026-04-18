@@ -1,21 +1,26 @@
+import json
 from modules.research_module import gather_facts
 from modules.plan_module import create_plan
 from modules.write_module import write_article
 from modules.text_generator import save_script
 from modules.topic_manager import TopicManager
 from modules.author_loader import load_author_style
+from modules.image_prompt_generator import generate_image_prompts, save_prompts_to_file
+from modules.status_checker import check_topic_status, print_status, get_missing_components
+from services.voice_service import generate_voice_from_script
+from services.image_service import generate_all_images
 from datetime import datetime
 import os
-import config  # ← ДОБАВИТЬ ЭТУ СТРОКУ
-import time    # ← И ЭТУ (для пауз)
+import config
+import time
 
 def process_single_topic(manager: TopicManager, topic_data: dict, prompt_style: str = None):
-    """Обрабатывает одну тему"""
+    """Обрабатывает одну тему с проверкой существующих файлов"""
     
     topic_id = topic_data["id"]
     topic = topic_data["topic"]
-    angle = topic_data.get("angle", "")      # ← ЧИТАЕМ ВЕКТОР
-    notes = topic_data.get("notes", "")  # Заметки по теме
+    angle = topic_data.get("angle", "")
+    notes = topic_data.get("notes", "")
     
     # Загружаем стиль автора
     try:
@@ -31,43 +36,129 @@ def process_single_topic(manager: TopicManager, topic_data: dict, prompt_style: 
     print(f"Заметки: {notes[:60]}..." if notes else "Заметки: нет")
     print(f"Стиль автора: {author_name}")
     
-    try:
-        # ЭТАП 1: Сбор фактов
-        print("\n🔍 ЭТАП 1: Сбор информации...")
-        facts = gather_facts(topic, notes)
-        print("✅ Факты собраны")
+    # === СОЗДАЁМ ПАПКУ ДЛЯ ТЕМЫ ===
+    safe_topic = topic[:30].replace(' ', '_').replace(':', '').replace('/', '').replace('"', '')
+    topic_folder = f"topic_{topic_id}_{safe_topic}"
+    topic_path = os.path.join(config.PATHS["output"], topic_folder)
+    os.makedirs(topic_path, exist_ok=True)
+    print(f"📁 Папка темы: {topic_path}")
+    
+    # === ПРОВЕРЯЕМ СТАТУС ===
+    status = check_topic_status(topic_path)
+    print_status(status, topic_id)
+    
+    missing = get_missing_components(status)
+    
+    if not missing:
+        print("✅ Все компоненты готовы! Пропускаем генерацию.")
+        manager.mark_completed(topic_id, os.path.join(topic_path, "script.txt"))
+        return True
+    
+    print(f"⚙️  Будет сгенерировано: {', '.join(missing)}")
+    try: 
+        # Загружаем статью если есть (для генерации промтов и картинок)
+        article = ""
+        script_filepath = os.path.join(topic_path, "script.txt")
         
-        # ЭТАП 2: Создание плана
-        print("\n📋 ЭТАП 2: Создание плана статьи...")
-        plan = create_plan(topic, facts)
-        print("✅ План готов")
-        
-        # ЭТАП 3: Написание статьи
-        print("\n✍️ ЭТАП 3: Написание статьи...")
-        article = write_article(topic, facts, plan, notes, prompt_style, angle)
-        print("✅ Статья написана")
-        
-        # Сохранение
-        filename = f"topic_{topic_id}_{topic[:30].replace(' ', '_')}.txt"
-        filepath = os.path.join(config.PATHS["scripts"], filename)
-        
-        content = f"""Тема: {topic}
-ID: {topic_id}
-Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-Автор: {author_name}
+        if status["script"]:
+            with open(script_filepath, "r", encoding="utf-8") as f:
+                full_content = f.read()
+                # Извлекаем статью из файла (после метаданных)
+                parts = full_content.split("\n\n", 1)
+                if len(parts) > 1:
+                    article = parts[1].strip()
+                else:
+                    article = full_content
+            print("📄 Статья загружена из файла")
+        else:
+            # Генерируем статью (ЭТАП 1-3)
+            print("\n🔍 ЭТАП 1: Сбор информации...")
+            facts = gather_facts(topic, notes)
+            print("✅ Факты собраны")
+            
+            print("\n📋 ЭТАП 2: Создание плана статьи...")
+            plan = create_plan(topic, facts)
+            print("✅ План готов")
+            
+            print("\n✍️ ЭТАП 3: Написание статьи...")
+            article = write_article(topic, facts, plan, notes, prompt_style, angle)
+            print("✅ Статья написана")
+            
+            # === СОХРАНЕНИЕ СЦЕНАРИЯ ===
+            script_filename = "script.txt"
+            script_filepath = os.path.join(topic_path, script_filename)
+            
+            content = f"""Тема: {topic}
+            ID: {topic_id}
+            Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            Автор: {author_name}
+            Вектор: {angle}
 
-{article}
-"""
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(content)
+            {article}
+            """
+            with open(script_filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+            
+            print(f"\n💾 Сценарий сохранён: {script_filepath}")
+            print(f"📊 Слов в тексте: {len(article.split())}")
         
-        manager.mark_completed(topic_id, filepath)
+        # === ЭТАП 4: ОЗВУЧКА ===
+        if "voice" in missing:
+            print("\n🎙️ ЭТАП 4: Генерация голоса...")
+            
+            audio_filename = "voice.mp3"
+            audio_filepath = os.path.join(topic_path, audio_filename)
+            
+            audio_path = generate_voice_from_script(
+                script_path=script_filepath,
+                output_path=audio_filepath
+            )
+            print(f"✅ Аудио сохранено: {audio_path}")
+        else:
+            print("\n✅ Озвучка: уже готова (пропущено)")
         
-        print(f"\n💾 Сохранено: {filepath}")
-        print(f"📊 Слов в тексте: {len(article.split())}")
+            # === ЭТАП 5: ГЕНЕРАЦИЯ ПРОМТОВ ===
+        if "prompts" in missing:
+            print("\n🎨 ЭТАП 5: Генерация промтов для картинок...")
+            
+            try:
+                prompts = generate_image_prompts(topic, article, angle)
+            except Exception as e:
+                print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+                print("⛔ Генерация остановлена. Промты не созданы.")
+                manager.mark_failed(topic_id)
+                return False
+            
+            # Сохраняем промты в файл
+            prompts_filepath = os.path.join(topic_path, "prompts.json")
+            save_prompts_to_file(prompts, prompts_filepath)
+        else:
+            print("\n✅ Промты: уже готовы (пропущено)")
+            # Загружаем существующие промты
+            prompts_filepath = os.path.join(topic_path, "prompts.json")
+            with open(prompts_filepath, "r", encoding="utf-8") as f:
+                prompts = json.load(f)
+        
+        # === ЭТАП 6: ГЕНЕРАЦИЯ КАРТИНОК ===
+        if "images" in missing:
+            print("\n🖼️ ЭТАП 6: Генерация картинок...")
+            
+            image_paths = generate_all_images(prompts, topic_path, topic)
+            
+            print(f"📊 Всего картинок: {len(image_paths)}")
+        else:
+            print("\n✅ Картинки: уже готовы (пропущено)")
+        
+        # Отмечаем тему как выполненную
+        manager.mark_completed(topic_id, script_filepath)
+        
+        # Примерная длительность
+        word_count = len(article.split())
+        duration = word_count / 2.5
+        print(f"⏱️ Длительность аудио: ~{duration:.0f} секунд")
         
         return True
-        
+    
     except Exception as e:
         print(f"\n❌ Ошибка: {e}")
         import traceback
@@ -111,14 +202,10 @@ def main():
     
     if choice == "3":
         topic = input("\nВведите тему: ").strip()
+        angle = input("Вектор статьи (или Enter для пропуска): ").strip()
         notes = input("Заметки по теме (или Enter для пропуска): ").strip()
         
-        # Добавляем в менеджер
-        topic_id = manager.add_topic(topic, "")
-        
-        # Обновляем заметки вручную (так как add_topic не принимает notes)
-        manager.data["topics"][-1]["notes"] = notes
-        manager._save_topics()
+        topic_id = manager.add_topic(topic, angle, notes)
         
         print("\n✅ Тема добавлена в очередь")
         return
@@ -150,7 +237,6 @@ def main():
             
             if i < len(pending):
                 print("\n⏸️ Пауза 5 секунд...")
-                import time
                 time.sleep(5)
         
         print(f"\n{'='*60}")

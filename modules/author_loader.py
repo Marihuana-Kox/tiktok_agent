@@ -20,6 +20,37 @@ def load_author_style() -> dict:
 def format_author_prompt(style: dict) -> str:
     """Форматирует стиль в промпт для модели"""
     
+    # === БЛОК ФОРМАТИРОВАНИЯ ЧИСЕЛ ===
+    number_block = ""
+    if "number_formatting" in style:
+        num_fmt = style["number_formatting"]
+        examples = num_fmt.get("examples", {})
+        
+        examples_text = "\n".join(f'  "{k}" → "{v}"' for k, v in examples.items())
+        
+        number_block = f"""
+=== ФОРМАТИРОВАНИЕ ЧИСЕЛ (КРИТИЧНО ДЛЯ ОЗВУЧКИ) ===
+
+ПРАВИЛО: {num_fmt.get('rule', 'Все числа писать словами')}
+
+ПРИМЕРЫ ПРЕОБРАЗОВАНИЯ:
+{examples_text}
+
+❌ ЗАПРЕЩЕНО в тексте для озвучки:
+- Цифры: 1763, 2560, 20000
+- Сокращения: тыс., млн, млрд, мм, см, кг
+- Форматы: $5, 3.14, 1/2
+
+✅ ОБЯЗАТЕЛЬНО:
+- "тысяча семьсот шестьдесят третий год" вместо "1763 год"
+- "двадцать тысяч" вместо "20 000"
+- "три миллиметра" вместо "3 мм"
+- "полторы тысячи лет" вместо "1500 лет"
+
+Это критично для правильной озвучки русским голосом!
+
+"""
+    
     # === БЛОК ХУКА (если есть) ===
     hook_block = ""
     if "hook_examples" in style:
@@ -76,6 +107,8 @@ def format_author_prompt(style: dict) -> str:
 
 ТОН ПОВЕСТВОВАНИЯ:
 {style['tone']}
+
+{number_block}
 
 {hook_block}
 
