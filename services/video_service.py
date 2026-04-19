@@ -1,243 +1,352 @@
-from moviepy import ImageClip, AudioFileClip, concatenate_videoclips
+from moviepy import ImageSequenceClip, AudioFileClip, concatenate_videoclips
 from moviepy.video import fx as vfx
+from PIL import Image
+import numpy as np
 import os
 import json
 import random
-from pathlib import Path
+import tempfile
+import shutil
+import subprocess
 
-# Импортируем конфиг из корня
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
-# Загружаем конфиг видео
 VIDEO_CONFIG_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
     "config_video.json"
 )
 
+DEFAULT_FPS = 24
+
+
 def load_video_config() -> dict:
-    """Загружает настройки видео из конфига"""
     if os.path.exists(VIDEO_CONFIG_PATH):
         with open(VIDEO_CONFIG_PATH, "r", encoding="utf-8") as f:
             return json.load(f)
     return {
-        "video_settings": {"fps": 30, "transition_duration": 0.5},
-        "effects": {"ken_burns": {"enabled": True, "zoom_speed": 0.1}},
-        "timing": {"first_image_multiplier": 1.2, "last_image_multiplier": 1.2}
+        "video_settings": {"fps": DEFAULT_FPS, "transition_duration": 0.5},
+        "effects": {"ken_burns": {"enabled": True}}
     }
 
 
 def calculate_image_timings(audio_path: str, num_images: int, config: dict) -> list:
-    """Рассчитывает длительность показа каждой картинки с вариациями"""
-    
     with AudioFileClip(audio_path) as audio:
         total_duration = audio.duration
     
     transition_duration = config.get("video_settings", {}).get("transition_duration", 0.5)
-    timing_config = config.get("timing", {})
-    
     total_transition_time = transition_duration * (num_images - 1)
     available_time = total_duration - total_transition_time
-    
-    # Базовое время
     base_duration = available_time / num_images
     
-    # Создаём тайминги с вариациями
-    timings = []
-    for i in range(num_images):
-        if i == 0:
-            multiplier = timing_config.get("first_image_multiplier", 1.2)
-        elif i == num_images - 1:
-            multiplier = timing_config.get("last_image_multiplier", 1.2)
+    return [base_duration] * num_images
+
+
+def generate_effect_frames(img_path: str, effect_type: str, duration: float, fps: int = 24, output_folder: str = None):
+    img = Image.open(img_path)
+    
+    if img.width != img.height:
+        min_side = min(img.width, img.height)
+        left = (img.width - min_side) // 2
+        top = (img.height - min_side) // 2
+        img = img.crop((left, top, left + min_side, top + min_side))
+    
+    img = img.resize((1024, 1024), Image.Resampling.LANCZOS)
+    
+    total_frames = int(fps * duration)
+    
+    if output_folder is None:
+        output_folder = tempfile.mkdtemp(prefix='clip_frames_')
+    else:
+        os.makedirs(output_folder, exist_ok=True)
+    
+    BASE_SCALE = 1920 / 1024
+    TARGET_W, TARGET_H = 1080, 1920
+    
+    frame_paths = []
+    
+    for i in range(total_frames):
+        progress = i / (total_frames - 1) if total_frames > 1 else 0
+        
+        if effect_type == "zoom_in":
+            scale = BASE_SCALE + (BASE_SCALE * 0.5 * progress)
+        elif effect_type == "zoom_out":
+            scale = (BASE_SCALE * 1.5) - (BASE_SCALE * 0.5 * progress)
+            scale = max(scale, BASE_SCALE)
         else:
-            multiplier = timing_config.get("middle_images_multiplier", 0.9)
+            scale = BASE_SCALE * 1.3
         
-        duration = base_duration * multiplier
+        if effect_type == "pan_left":
+            pan_x, pan_y = -200 * progress, 0
+        elif effect_type == "pan_right":
+            pan_x, pan_y = 200 * progress, 0
+        elif effect_type == "pan_up":
+            pan_x, pan_y = 0, -200 * progress
+        elif effect_type == "pan_down":
+            pan_x, pan_y = 0, 200 * progress
+        else:
+            pan_x, pan_y = 0, 0
         
-        # Ограничиваем мин/макс
-        min_dur = timing_config.get("min_image_duration", 3.0)
-        max_dur = timing_config.get("max_image_duration", 15.0)
-        duration = max(min_dur, min(max_dur, duration))
+        new_w = int(1024 * scale)
+        new_h = int(1024 * scale)
+        scaled = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         
-        timings.append(duration)
+        left = (new_w - TARGET_W) // 2 + int(pan_x)
+        top = (new_h - TARGET_H) // 2 + int(pan_y)
+        left = max(0, min(left, new_w - TARGET_W))
+        top = max(0, min(top, new_h - TARGET_H))
+        
+        cropped = scaled.crop((left, top, left + TARGET_W, top + TARGET_H))
+        
+        frame_path = os.path.join(output_folder, f'frame_{i:04d}.jpg')
+        cropped.save(frame_path, quality=85)
+        frame_paths.append(frame_path)
+        
+        if i % 50 == 0:
+            import gc
+            gc.collect()
     
-    # Корректируем чтобы совпадало с аудио
-    total = sum(timings) + total_transition_time
-    if total != total_duration:
-        diff = (total_duration - total) / num_images
-        timings = [t + diff for t in timings]
-    
-    print(f"🎬 Расчёт тайминга:")
-    print(f"   Длительность аудио: {total_duration:.1f} сек")
-    print(f"   Количество картинок: {num_images}")
-    for i, t in enumerate(timings):
-        print(f"   [{i+1}] {t:.1f} сек")
-    print(f"   Переходы: {transition_duration} сек")
-    
-    return timings
+    return frame_paths, output_folder
 
 
-def apply_effects_to_clip(clip, effects_config: dict, transition_duration: float = 0.5, seed: int = None, ):
-    """
-    Применяет эффекты к клипу.
-    
-    Args:
-        clip: ImageClip
-        effects_config: Настройки эффектов из конфига
-        seed: Seed для случайности (чтобы одинаковые картинки = одинаковые эффекты)
-    
-    Returns:
-        Клип с эффектами
-    """
-    
+def apply_effects_to_clip(img_path: str, duration: float, effects_config: dict, 
+                          transition_duration: float = 0.5, seed: int = None, fps: int = 24):
     if seed is not None:
         random.seed(seed)
     
     ken_burns = effects_config.get("ken_burns", {})
-    rotation = effects_config.get("rotation", {})
+    ken_burns_enabled = ken_burns.get("enabled", True)
     
-    # === КЕН БЁРНС (ЗУМ) — безопасная версия ===
-    if ken_burns.get("enabled", True):
-        directions = ken_burns.get("directions", ["zoom_in", "zoom_out", "none"])
-        direction = random.choice(directions)
+    if ken_burns_enabled:
+        effect_types = ["zoom_in", "zoom_out", "pan_left", "pan_right", "pan_up", "pan_down"]
+        effect_type = random.choice(effect_types)
+        print(f"      -> Effect: {effect_type}")
+    else:
+        effect_type = "static"
+        print(f"      -> Effect: static")
+    
+    temp_folder = tempfile.mkdtemp(prefix=f'clip_{seed}_')
+    
+    if effect_type == "static":
+        img = Image.open(img_path)
+        if img.width != img.height:
+            min_side = min(img.width, img.height)
+            left = (img.width - min_side) // 2
+            top = (img.height - min_side) // 2
+            img = img.crop((left, top, left + min_side, top + min_side))
+        img = img.resize((1080, 1920), Image.Resampling.LANCZOS)
         
-        if direction == "zoom_in":
-            # Плавное увеличение от 1.0 до 1.1 (максимум 10%)
-            start_scale = 1.0
-            end_scale = 1.5
-            clip = clip.with_effects([
-                vfx.Resize(lambda t: start_scale + (end_scale - start_scale) * (t / clip.duration))
-            ])
-        elif direction == "zoom_out":
-            # Плавное уменьшение от 1.1 до 1.0
-            start_scale = 1.5
-            end_scale = 1.0
-            clip = clip.with_effects([
-                vfx.Resize(lambda t: start_scale - (start_scale - end_scale) * (t / clip.duration))
-            ])
-        # else "none" — без зума
+        from moviepy import ImageClip
+        clip = ImageClip(np.array(img), duration=duration)
+        shutil.rmtree(temp_folder, ignore_errors=True)
+    else:
+        frame_paths, temp_folder = generate_effect_frames(img_path, effect_type, duration=duration, fps=fps, output_folder=temp_folder)
+        print(f"      OK: {len(frame_paths)} frames on disk")
+        
+        clip = ImageSequenceClip(frame_paths, fps=fps)
+        clip._temp_folder = temp_folder
     
-    # === МИКРО-ВРАЩЕНИЕ ===
-    if rotation.get("enabled", True):
-        if random.random() < rotation.get("probability", 0.3):
-            max_angle = rotation.get("max_angle", 2)
-            angle = random.uniform(-max_angle, max_angle)
-            clip = clip.with_effects([vfx.Rotate(angle)])
-    
-    # === FADE ПЕРЕХОДЫ ===
     if transition_duration > 0:
         clip = clip.with_effects([
             vfx.FadeIn(transition_duration),
             vfx.FadeOut(transition_duration)
         ])
+        print(f"      -> Fade: {transition_duration}s")
     
     return clip
 
 
-def create_video_from_images(
-    images: list,
-    audio_path: str,
-    output_path: str,
-    config: dict = None
-) -> str:
-    """Создаёт видео из картинок с эффектами"""
+def convert_to_ios_compatible(input_path: str):
+    """
+    Перекодирует видео в 100% iOS-совместимый формат через FFmpeg.
+    """
+    output_path = input_path.replace('.mp4', '_ios.mov')
     
+    print(f"\n📱 Converting to iOS compatible format...")
+    print(f"   Input: {input_path}")
+    print(f"   Output: {output_path}")
+    
+    cmd = [
+        'ffmpeg', '-y',
+        '-i', input_path,
+        '-c:v', 'libx264',
+        '-profile:v', 'baseline',
+        '-level', '3.0',
+        '-pix_fmt', 'yuv420p',
+        '-colorspace', 'bt709',
+        '-color_primaries', 'bt709',
+        '-color_trc', 'bt709',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-ar', '44100',
+        '-ac', '2',
+        '-movflags', '+faststart',
+        '-movflags', '+write_colr',
+        '-brand', 'mp41',
+        '-preset', 'medium',
+        '-b:v', '3000k',
+        '-g', '24',
+        output_path
+    ]
+    
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    
+    if result.returncode == 0:
+        orig_size = os.path.getsize(input_path) / (1024*1024)
+        new_size = os.path.getsize(output_path) / (1024*1024)
+        print(f"   ✅ Success! {orig_size:.1f}MB → {new_size:.1f}MB")
+        
+        # Проверка видео
+        probe_v = subprocess.run([
+            'ffprobe', '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=codec_name,profile,level,width,height',
+            '-of', 'default=noprint_wrappers=1',
+            output_path
+        ], capture_output=True, text=True)
+        
+        # Проверка аудио
+        probe_a = subprocess.run([
+            'ffprobe', '-v', 'error',
+            '-select_streams', 'a:0',
+            '-show_entries', 'stream=codec_name,sample_rate,channels',
+            '-of', 'default=noprint_wrappers=1',
+            output_path
+        ], capture_output=True, text=True)
+        
+        print(f"   📹 Video:")
+        for line in probe_v.stdout.strip().split('\n'):
+            if line:
+                print(f"      {line}")
+        
+        print(f"   🎵 Audio:")
+        for line in probe_a.stdout.strip().split('\n'):
+            if line:
+                print(f"      {line}")
+        
+        # Заменяем оригинал
+        os.remove(input_path)
+        os.rename(output_path, input_path)
+        print(f"   ✅ File: {input_path}")
+        
+        return input_path
+    else:
+        print(f"   ⚠️  Warning: {result.stderr[:200]}")
+        return input_path
+
+
+def create_video_from_images(images: list, audio_path: str, output_path: str, config: dict = None) -> str:
     if config is None:
         config = load_video_config()
     
     print(f"\n{'='*60}")
-    print(f"🎬 МОНТАЖ ВИДЕО")
+    print(f"VIDEO MONTAGE (Memory Optimized + iOS Compatible)")
     print(f"{'='*60}")
-    print(f"📁 Картинки: {len(images)} шт")
-    print(f"🎵 Аудио: {os.path.basename(audio_path)}")
-    print(f"📐 Формат: 9:16 (1080x1920)")
+    print(f"Images: {len(images)}")
     
-    # Получаем настройки
-    video_settings = config.get("video_settings", {})
     effects_config = config.get("effects", {})
-    transition_duration = video_settings.get("transition_duration", 0.5)
-    fps = video_settings.get("fps", 30)
+    transition_duration = config.get("video_settings", {}).get("transition_duration", 0.5)
+    fps = config.get("video_settings", {}).get("fps", DEFAULT_FPS)
     
-    print(f"🎞️  FPS: {fps}")
-    print(f"🎭 Переходы: {transition_duration} сек")
-    
-    # Проверяем файлы
     for img_path in images:
         if not os.path.exists(img_path):
-            raise FileNotFoundError(f"Картинка не найдена: {img_path}")
+            raise FileNotFoundError(f"Image not found: {img_path}")
     
     if not os.path.exists(audio_path):
-        raise FileNotFoundError(f"Аудио не найдено: {audio_path}")
+        raise FileNotFoundError(f"Audio not found: {audio_path}")
     
-    # Рассчитываем тайминг
     timings = calculate_image_timings(audio_path, len(images), config)
     
-    # Создаём клипы с эффектами
     clips = []
+    temp_folders = []
     
     for i, (img_path, duration) in enumerate(zip(images, timings)):
-        print(f"   [{i+1}/{len(images)}] {os.path.basename(img_path)} → {duration:.1f} сек")
+        print(f"\n   [{i+1}/{len(images)}] {os.path.basename(img_path)}")
+        print(f"      Duration: {duration:.1f}s")
         
-        # Создаём клип
-        clip = ImageClip(img_path, duration=duration)
-        
-        # Применяем эффекты (передаём transition_duration явно!)
-        clip = apply_effects_to_clip(
-            clip=clip,
-            effects_config=effects_config,
-            transition_duration=transition_duration,
-            seed=i
-        )
-        
-        clips.append(clip)
+        try:
+            clip = apply_effects_to_clip(
+                img_path=img_path,
+                duration=duration,
+                effects_config=effects_config,
+                transition_duration=transition_duration,
+                seed=i,
+                fps=fps
+            )
+            
+            if hasattr(clip, '_temp_folder'):
+                temp_folders.append(clip._temp_folder)
+            
+            print(f"      OK: Clip {clip.size}, {clip.duration}s")
+            clips.append(clip)
+            
+            import gc
+            gc.collect()
+            
+        except Exception as e:
+            print(f"   WARN: {e}")
+            import traceback
+            traceback.print_exc()
+            from moviepy import ImageClip
+            img = Image.open(img_path).resize((1080, 1920))
+            clip = ImageClip(np.array(img), duration=duration)
+            clip = clip.with_effects([vfx.FadeIn(transition_duration), vfx.FadeOut(transition_duration)])
+            clips.append(clip)
     
-    # Соединяем клипы
-    print("\n🔗 Соединение клипов...")
+    print("\n   Concatenating...")
     final_video = concatenate_videoclips(clips, method="compose")
+    print(f"   OK: {final_video.size[0]}x{final_video.size[1]}, {final_video.duration:.1f}s")
     
-    # Накладываем аудио
-    print("🎵 Наложение аудио...")
+    print("   Adding audio...")
     audio = AudioFileClip(audio_path)
     final_video = final_video.with_audio(audio)
+    print(f"   OK: Audio {audio.duration:.1f}s")
     
-    # Создаём папку если нет
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
-    # Рендерим видео
-    print(f"💾 Рендер видео: {output_path}")
-    print("⏳ Это может занять 2-5 минут...")
+    # Рендер (БЕЗ verbose и logger!)
+    print(f"\n   Rendering: {output_path}")
+    print("   Format: H.264 + AAC")
+    print("   This may take 2-5 minutes...")
     
     final_video.write_videofile(
         output_path,
         fps=fps,
         codec='libx264',
         audio_codec='aac',
+        bitrate='5000k',
+        audio_bitrate='192k',
+        preset='medium',
+        threads=4,
         temp_audiofile='temp-audio.m4a',
         remove_temp=True
     )
     
-    # Освобождаем память
     final_video.close()
     audio.close()
     
-    print(f"\n✅ Видео сохранено: {output_path}")
+    print("\n   Cleaning up temp files...")
+    for folder in temp_folders:
+        shutil.rmtree(folder, ignore_errors=True)
+    print(f"   OK: Removed {len(temp_folders)} temp folders")
     
-    file_size = os.path.getsize(output_path) / (1024 * 1024)
-    print(f"📊 Размер файла: {file_size:.1f} MB")
+    print(f"\n   DONE: {output_path}")
+    print(f"   Size: {os.path.getsize(output_path) / (1024*1024):.1f} MB")
+    
+    # iOS конвертация
+    output_path = convert_to_ios_compatible(output_path)
+    
+    print(f"\n   🎉 Video ready for AirDrop!")
     
     return output_path
 
 
 def get_images_from_project(project_path: str) -> list:
-    """Получает список картинок из папки проекта в правильном порядке"""
-    
     images = []
-    
     for filename in os.listdir(project_path):
-        if filename.endswith(('.jpg', '.jpeg', '.png')):
-            if filename.startswith('image_'):
-                images.append(os.path.join(project_path, filename))
+        if filename.endswith(('.jpg', '.jpeg', '.png')) and filename.startswith('image_'):
+            images.append(os.path.join(project_path, filename))
     
     def extract_number(filepath):
         filename = os.path.basename(filepath)
@@ -247,51 +356,23 @@ def get_images_from_project(project_path: str) -> list:
         return 999
     
     images.sort(key=extract_number)
-    
-    print(f"📂 Найдено {len(images)} картинок в проекте")
-    for i, img in enumerate(images, 1):
-        print(f"   [{i}] {os.path.basename(img)}")
-    
     return images
 
 
-def generate_video_for_topic(
-    project_path: str,
-    output_filename: str = "video.mp4"
-) -> str:
-    """Генерирует видео для темы автоматически"""
-    
+def generate_video_for_topic(project_path: str, output_filename: str = "video.mp4") -> str:
     print(f"\n{'='*60}")
-    print(f"🎬 ГЕНЕРАЦИЯ ВИДЕО ДЛЯ: {os.path.basename(project_path)}")
+    print(f"GENERATING VIDEO FOR: {os.path.basename(project_path)}")
     print(f"{'='*60}")
     
     config = load_video_config()
-    
-    # Загружаем активный пресет
-    preset_name = config.get("active_preset", "dynamic")
-    presets = config.get("style_presets", {})
-    
-    if preset_name in presets:
-        preset = presets[preset_name]
-        print(f"🎭 Пресет: {preset_name} — {preset.get('description', '')}")
-        
-        # Применяем пресет к настройкам
-        if "ken_burns" in preset:
-            config["effects"]["ken_burns"]["enabled"] = preset["ken_burns"]
-        if "rotation" in preset:
-            config["effects"]["rotation"]["enabled"] = preset["rotation"]
-        if "transition" in preset:
-            config["video_settings"]["transition_duration"] = preset["transition"]
-    
     images = get_images_from_project(project_path)
     
     if len(images) < 3:
-        raise Exception(f"Недостаточно картинок для видео (найдено: {len(images)}, нужно: минимум 3)")
+        raise Exception(f"Not enough images: {len(images)}")
     
     audio_path = os.path.join(project_path, "voice.mp3")
-    
     if not os.path.exists(audio_path):
-        raise Exception(f"Аудио не найдено: {audio_path}")
+        raise Exception(f"Audio not found")
     
     output_path = os.path.join(project_path, output_filename)
     
